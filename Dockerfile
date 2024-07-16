@@ -9,7 +9,7 @@ RUN GOOS=linux go build -o /mbtileserver
 
 
 # Stage 2: start from a smaller image
-FROM alpine:3.17
+FROM alpine:3.18
 
 WORKDIR /
 
