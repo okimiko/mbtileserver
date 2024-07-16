@@ -17,6 +17,7 @@ type ServiceSetConfig struct {
 	EnableTileJSON            bool
 	EnablePreview             bool
 	EnableArcGIS              bool
+	ArcgisProxy               string
 	BasemapStyleURL           string
 	BasemapTilesURL           string
 	ReturnMissingImageTile404 bool
@@ -33,6 +34,7 @@ type ServiceSet struct {
 	enableTileJSON            bool
 	enablePreview             bool
 	enableArcGIS              bool
+	arcgisProxy               string
 	basemapStyleURL           string
 	basemapTilesURL           string
 	returnMissingImageTile404 bool
@@ -55,6 +57,7 @@ func New(cfg *ServiceSetConfig) (*ServiceSet, error) {
 		enableTileJSON:            cfg.EnableTileJSON,
 		enablePreview:             cfg.EnablePreview,
 		enableArcGIS:              cfg.EnableArcGIS,
+		arcgisProxy:               cfg.ArcgisProxy,
 		basemapStyleURL:           cfg.BasemapStyleURL,
 		basemapTilesURL:           cfg.BasemapTilesURL,
 		returnMissingImageTile404: cfg.ReturnMissingImageTile404,

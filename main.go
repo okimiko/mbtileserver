@@ -76,6 +76,7 @@ var (
 	enableReloadFSWatch bool
 	generateIDs         bool
 	enableArcGIS        bool
+	arcgisProxy         string
 	disablePreview      bool
 	disableTileJSON     bool
 	disableServiceList  bool
@@ -100,6 +101,7 @@ func init() {
 	flags.BoolVarP(&redirect, "redirect", "r", false, "Redirect HTTP to HTTPS")
 
 	flags.BoolVarP(&enableArcGIS, "enable-arcgis", "", false, "Enable ArcGIS Mapserver endpoints")
+	flags.StringVarP(&arcgisProxy, "arcgis-proxy", "", "", "Mapserver URL to be proxied for arcgis requests e.g. http://localhost:18000/styles/osm-liberty/256/%%s/%%s/%%s.png")
 	flags.BoolVarP(&enableReloadFSWatch, "enable-fs-watch", "", false, "Enable reloading of tilesets by watching filesystem")
 	flags.BoolVarP(&enableReloadSignal, "enable-reload-signal", "", false, "Enable graceful reload using HUP signal to the server process")
 
@@ -131,6 +133,12 @@ func init() {
 
 	if env := os.Getenv("TILE_DIR"); env != "" {
 		tilePath = env
+	}
+
+	if env := os.Getenv("ARCGIS_PROXY"); env != "" {
+		enableArcGIS = true
+		tilesOnly = true
+		arcgisProxy = env
 	}
 
 	if env := os.Getenv("GENERATE_IDS"); env != "" {
@@ -301,6 +309,7 @@ func serve() {
 		EnableTileJSON:            !disableTileJSON,
 		EnablePreview:             !disablePreview,
 		EnableArcGIS:              enableArcGIS,
+		ArcgisProxy:               arcgisProxy,
 		BasemapStyleURL:           basemapStyleURL,
 		BasemapTilesURL:           basemapTilesURL,
 		ReturnMissingImageTile404: missingImageTile404,
@@ -313,11 +322,11 @@ func serve() {
 		// Discover all tilesets
 		log.Infof("Searching for tilesets in %v\n", path)
 		filenames, err := mbtiles.FindMBtiles(path)
-		if err != nil {
+		if err != nil && path != "./tilesets" {
 			log.Errorf("Unable to list mbtiles in '%v': %v\n", path, err)
 		}
 		if len(filenames) == 0 {
-			log.Errorf("No tilesets found in %s", path)
+			log.Warnf("No tilesets found in %s", path)
 		}
 
 		// Register all tilesets
@@ -332,6 +341,13 @@ func serve() {
 			if err != nil {
 				log.Errorf("Could not add tileset for %q with ID %q\n%v", filename, id, err)
 			}
+		}
+	}
+
+	if arcgisProxy != "" {
+		err = svcSet.AddTileset("proxy", "proxy")
+		if err != nil {
+			log.Errorf("Could not add proxy tileset: %v", err)
 		}
 	}
 

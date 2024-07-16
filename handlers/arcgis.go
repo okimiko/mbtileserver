@@ -6,6 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"fmt"
+	"io"
+
+	log "github.com/sirupsen/logrus"
 )
 
 type arcGISLOD struct {
@@ -106,21 +110,53 @@ func (svc *ServiceSet) arcgisInfoHandler(w http.ResponseWriter, r *http.Request)
 // arcGISServiceJSON returns ArcGIS standard JSON describing the ArcGIS
 // tile service.
 func (ts *Tileset) arcgisServiceJSON() ([]byte, error) {
-	db := ts.db
-	imgFormat := db.GetTileFormat().String()
-	metadata, err := db.ReadMetadata()
-	if err != nil {
-		return nil, err
-	}
-	name, _ := metadata["name"].(string)
-	description, _ := metadata["description"].(string)
-	attribution, _ := metadata["attribution"].(string)
-	tags, _ := metadata["tags"].(string)
-	credits, _ := metadata["credits"].(string)
+	var name 		string
+	var description	string
+	var attribution	string
+	var tags		string
+	var credits		string
 
-	// TODO: make sure that min and max zoom always populated
-	minZoom, _ := metadata["minzoom"].(int)
-	maxZoom, _ := metadata["maxzoom"].(int)
+	var minZoom		int
+	var maxZoom		int
+
+	var bounds		[]float64
+
+	if ts.id != "proxy" {
+		db := ts.db
+		metadata, err := db.ReadMetadata()
+		if err != nil {
+			return nil, err
+		}
+
+		name, _ = metadata["name"].(string)
+		description, _ = metadata["description"].(string)
+		attribution, _ = metadata["attribution"].(string)
+		tags, _ = metadata["tags"].(string)
+		credits, _ = metadata["credits"].(string)
+
+		// TODO: make sure that min and max zoom always populated
+		minZoom, _ = metadata["minzoom"].(int)
+		maxZoom, _ = metadata["maxzoom"].(int)
+
+		var ok bool
+		bounds, ok = metadata["bounds"].([]float64)
+		if !ok {
+			bounds = []float64{-180, -85, 180, 85} // default to world bounds
+		}
+	} else {
+		name = ts.id
+		description = "arcgis-proxy"
+		attribution = ""
+		tags = ""
+		credits = ""
+
+		minZoom = 0
+		maxZoom = 20
+		bounds = []float64{-180, -85, 180, 85}
+	}
+
+	imgFormat := ts.tileformat.String()
+
 	// TODO: extract dpi from the image instead
 	var lods []arcGISLOD
 
@@ -136,10 +172,6 @@ func (ts *Tileset) arcgisServiceJSON() ([]byte, error) {
 	minScale := lods[0].Scale
 	maxScale := lods[len(lods)-1].Scale
 
-	bounds, ok := metadata["bounds"].([]float64)
-	if !ok {
-		bounds = []float64{-180, -85, 180, 85} // default to world bounds
-	}
 	extent := geoBoundsToWMExtent(bounds)
 
 	tileInfo := map[string]interface{}{
@@ -388,8 +420,6 @@ func (ts *Tileset) arcgisTileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	db := ts.db
-
 	// split path components to extract tile coordinates x, y and z
 	pcs := strings.Split(r.URL.Path[1:], "/")
 	// strip off /arcgis/rest/services/ and then
@@ -400,41 +430,63 @@ func (ts *Tileset) arcgisTileHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	z, y, x := pcs[l-3], pcs[l-2], pcs[l-1]
-	tc, _, err := tileCoordFromString(z, x, y)
-	if err != nil {
-		http.Error(w, "invalid tile coordinates", http.StatusBadRequest)
-		return
-	}
-
-	// flip y to match the spec
-	tc.y = (1 << uint64(tc.z)) - 1 - tc.y
+	log.Debugf("Queried z=%s, x=%s, y=%s", z, x, y)
 
 	var data []byte
-	err = db.ReadTile(tc.z, tc.x, tc.y, &data)
 
-	if err != nil {
-		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		ts.svc.logError("cannot fetch tile from DB for z=%d, x=%d, y=%d for %v: %v", tc.z, tc.x, tc.y, r.URL.Path, err)
-		return
-	}
+	if ts.id != "proxy" {
+		//only access db in not proxy mode
+		db := ts.db
 
-	if data == nil || len(data) <= 1 {
-		// Return blank PNG for all image types
-		w.Header().Set("Content-Type", "image/png")
-		_, err = w.Write(BlankPNG(ts.tilesize))
+		tc, _, err := tileCoordFromString(z, x, y)
+		if err != nil {
+			http.Error(w, "invalid tile coordinates", http.StatusBadRequest)
+			ts.svc.logError("invalid tile coordinates for z=%s, x=%s, y=%s", z, x, y)
+			return
+		}
+	
+		// flip y to match the spec
+		tc.y = (1 << uint64(tc.z)) - 1 - tc.y
+
+		err = db.ReadTile(tc.z, tc.x, tc.y, &data)
 
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			ts.svc.logError("could not return blank image for %v: %v", r.URL.Path, err)
+			ts.svc.logError("cannot fetch tile from DB for z=%d, x=%d, y=%d at path %v: %v", tc.z, tc.x, tc.y, r.URL.Path, err)
+			return
 		}
-	} else {
+	
+		if data == nil || len(data) <= 1 {
+			tileNotFoundHandler(w, r, ts.tileformat, ts.tilesize, ts.svc.returnMissingImageTile404)
+			return
+		}
+	
+		log.Debugf("NOT PROXYED %v", r.URL.Path)
 		w.Header().Set("Content-Type", db.GetTileFormat().MimeType())
-		_, err = w.Write(data)
+		w.Header().Set("Content-Encoding", "gzip")
+	} else {
+		// proxy to remote url
+		url := fmt.Sprintf(ts.svc.arcgisProxy, z, x, y)
+		log.Debugf("PROXY %v - %v", r.URL.Path, url)
+		resp, err := http.Get(url)
+
+		if err != nil {
+			ts.svc.logError("Found no tile data to response for %v: %v on proxy %s", r.URL.Path, err, ts.svc.arcgisProxy)
+		} else {
+			log.Debugf("PROXIED %v - %v", r.URL.Path, url)
+			data, _ = io.ReadAll(resp.Body)
+		}
+	}
+
+	if data != nil {
+		_, err := w.Write(data)
 
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			ts.svc.logError("could not write tile data to response for %v: %v", r.URL.Path, err)
 		}
+	} else {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
 }
 

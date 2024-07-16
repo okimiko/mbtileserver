@@ -31,44 +31,60 @@ type Tileset struct {
 // Tileset is registered at the passed in path.
 // Any errors encountered opening the tileset are returned.
 func newTileset(svc *ServiceSet, filename, id, path string) (*Tileset, error) {
-	db, err := mbtiles.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("Invalid mbtiles file %q: %v", filename, err)
-	}
+	var ts *Tileset
 
-	metadata, err := db.ReadMetadata()
-	if err != nil {
-		return nil, fmt.Errorf("Invalid mbtiles file %q: %v", filename, err)
-	}
+	if filename != "proxy" {
+		db, err := mbtiles.Open(filename)
+		if err != nil {
+			return nil, fmt.Errorf("Invalid mbtiles file %q: %v", filename, err)
+		}
 
-	name, ok := metadata["name"].(string)
-	if !ok {
-		name = strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
-	}
+		metadata, err := db.ReadMetadata()
+		if err != nil {
+			return nil, fmt.Errorf("Invalid mbtiles file %q: %v", filename, err)
+		}
 
-	ts := &Tileset{
-		svc:        svc,
-		db:         db,
-		id:         id,
-		name:       name,
-		tileformat: db.GetTileFormat(),
-		tilesize:   db.GetTileSize(),
-		published:  true,
+		name, ok := metadata["name"].(string)
+		if !ok {
+			name = strings.TrimSuffix(filepath.Base(filename), filepath.Ext(filename))
+		}
+
+		ts = &Tileset{
+			svc:        svc,
+			db:         db,
+			id:         id,
+			name:       name,
+			tileformat: db.GetTileFormat(),
+			tilesize:   db.GetTileSize(),
+			published:  true,
+		}
+	} else {
+		ts = &Tileset{
+			svc:        svc,
+			db:         nil,
+			id:         filename,
+			name:       filename,
+			tileformat: mbtiles.PBF,
+			tilesize:   256,
+			published:  true,
+		}
 	}
 
 	// setup routes for tileset
 	m := http.NewServeMux()
 	m.HandleFunc(path+"/tiles/", ts.tileHandler)
 
-	if svc.enableTileJSON {
-		m.HandleFunc(path, ts.tileJSONHandler)
-	}
+	if filename != "proxy" {
+		if svc.enableTileJSON {
+			m.HandleFunc(path, ts.tileJSONHandler)
+		}
 
-	if svc.enablePreview {
-		m.HandleFunc(path+"/map", ts.previewHandler)
+		if svc.enablePreview {
+			m.HandleFunc(path+"/map", ts.previewHandler)
 
-		staticPrefix := path + "/map/static/"
-		m.Handle(staticPrefix, staticHandler(staticPrefix))
+			staticPrefix := path + "/map/static/"
+			m.Handle(staticPrefix, staticHandler(staticPrefix))
+		}
 	}
 
 	if svc.enableArcGIS {
