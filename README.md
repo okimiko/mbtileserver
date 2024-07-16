@@ -69,6 +69,7 @@ Flags:
       --domain string              Domain name of this server.  NOTE: only used for AutoTLS.
       --dsn string                 Sentry DSN
       --enable-arcgis              Enable ArcGIS Mapserver endpoints
+      --arcgis-proxy               Mapserver URL to be proxied for arcgis requests e.g. http://localhost:18000/styles/osm-liberty/256/%%s/%%s/%%s.png
       --enable-fs-watch            Enable reloading of tilesets by watching filesystem
       --enable-reload-signal       Enable graceful reload using HUP signal to the server process
       --generate-ids               Automatically generate tileset IDs instead of using relative path
@@ -415,6 +416,10 @@ IMPORTANT: this does not support vector tiles.
 This project currently provides a minimal ArcGIS tiled map service API for tiles stored in an mbtiles file.
 
 This is enabled with the `--enable-arcgis` flag.
+
+To be able to provide a basemap for arcgis clients it is possible to proxy any XYZ mapserver through the api.
+
+This is enabled and configured with the `--arcgis-proxy http://localhost:18000/styles/osm-liberty/256/%%s/%%s/%%s.png` parameter.
 
 This should be sufficient for use with online platforms such as [Data Basin](https://databasin.org). Because the ArcGIS API relies on a number of properties that are not commonly available within an mbtiles file, so certain aspects are stubbed out with minimal information.
 
